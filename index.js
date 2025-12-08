@@ -40,6 +40,18 @@ const verifyJWT = async (req, res, next) => {
   }
 }
 
+ // role middlewares
+    const verifyADMIN = async (req, res, next) => {
+      const email = req.tokenEmail
+      const user = await usersCollection.findOne({ email })
+      if (user?.role !== 'admin')
+        return res
+          .status(403)
+          .send({ message: 'Admin only Actions!', role: user?.role })
+
+      next()
+    }
+
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(process.env.MONGODB_URI, {
   serverApi: {
@@ -50,7 +62,36 @@ const client = new MongoClient(process.env.MONGODB_URI, {
 })
 async function run() {
   try {
-    
+    const db = client.db('ticketbariDB')
+    const plantsCollection = db.collection('plants')
+    const ticketsCollection = db.collection('tickets')
+    const usersCollection = db.collection('users')
+    const sellerRequestsCollection = db.collection('sellerRequests')
+
+    app.post('/user', async (req, res) => {
+        try {
+            const userData = req.body
+            if (!userData?.email) return res.status(400).send({ message: 'Email required' })
+            userData.created_at = userData.created_at || new Date().toISOString()
+      userData.last_loggedIn = new Date().toISOString()
+      userData.role = userData.role || 'customer'
+
+      const query = { email: userData.email }
+      const update = { $set: userData }
+      const opts = { upsert: true }
+      const result = await usersCollection.updateOne(query, update, opts)
+       return res.send(result)
+        } catch (error) {
+            console.error('/user error', err)
+            res.status(500).send({ message: 'Server error' })
+        }
+    })
+
+    // get all ticket for admin
+    app.get('/admin/tickets', async (req, res) => {
+      const result = await ticketsCollection.find().toArray()
+      res.send(result)
+    })
 
     // Send a ping to confirm a successful connection
     await client.db('admin').command({ ping: 1 })
