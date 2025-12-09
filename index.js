@@ -87,6 +87,30 @@ async function run() {
         }
     })
 
+    // get a user's role
+    app.get('/user/role', verifyJWT, async (req, res) => {
+      try {
+        const result = await usersCollection.findOne({ email: req.tokenEmail })
+        if(!user) return res.status(404).send({ message: 'User not found' })
+      res.send({ role: result?.role })
+      } catch (error) {
+        console.error('/user/role error',error)
+        res.status(500).send({ message: 'Server error' })
+      }
+    })
+
+    // get a user Profile
+    app.get('/user/profile', verifyJWT, async (req, res) => {
+      try {
+        const result = await usersCollection.findOne({ email: req.tokenEmail })
+        if(!user) return res.status(404).send({ message: 'User not found' })
+      res.send(user)
+      } catch (error) {
+        console.error('/user/profile error',error)
+        res.status(500).send({ message: 'Server error' })
+      }
+    })
+
     // get all ticket for admin
     app.get('/admin/tickets', async (req, res) => {
       const result = await ticketsCollection.find().toArray()
