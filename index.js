@@ -19,7 +19,7 @@ app.use(
   cors({
     origin: [process.env.CLIENT_DOMAIN],
     credentials: true,
-    optionSuccessStatus: 200,
+    optionsSuccessStatus: 200,
   })
 )
 app.use(express.json())
@@ -82,7 +82,7 @@ async function run() {
       const result = await usersCollection.updateOne(query, update, opts)
        return res.send(result)
         } catch (error) {
-            console.error('/user error', err)
+            console.error('/user error', error)
             res.status(500).send({ message: 'Server error' })
         }
     })
@@ -92,6 +92,50 @@ async function run() {
       const result = await ticketsCollection.find().toArray()
       res.send(result)
     })
+    // Admin: toggle advertise, enforce max 6 advertised
+    app.patch('/admin/tickets/advertise/:id', async (req, res) => {
+        const id = req.params.id
+        if (!ObjectId.isValid(id)) return res.status(400).send({ message: 'Invalid id' })
+            const ticket = await ticketsCollection.findOne({ _id: new ObjectId(id) })
+        if (!ticket) return res.status(404).send({ message: 'Ticket not found' })
+        if (ticket.verificationStatus !== 'approved') return res.status(400).send({ message: 'Only approved tickets can be advertised' })
+        if (!ticket.isAdvertised) {
+            const count = await ticketsCollection.countDocuments({ isAdvertised: true, verificationStatus: 'approved' })
+            if ( count >= 6 ) return res.status(400).send({ message: 'Max 6 advertised' })
+        }
+    await ticketsCollection.updateOne({ _id: new ObjectId(id) }, { $set: { isAdvertised: !ticket.isAdvertised }})
+    res.send({ message: 'Toggled advertise', isAdvertised: !ticket.isAdvertised })
+    })
+
+
+
+    // get advertised tickets(max 6)
+    app.get('/tickets/advertised-home', async (req, res) => {
+      const docs = await usersCollection.find({ isAdvertised: true, verificationStatus: 'approved' }).limit(6).toArray()
+      res.send(docs)
+    })
+
+    // ticket booking
+    app.post("/booking", async (req, res) => {
+      const { ticketId, quantity, status } = req.body;
+
+      const ticket = await Ticket.findById(ticketId);
+
+      if (!ticket) {
+        return res.status(404).json({ message: "Ticket not found" })
+      }
+      const booking = await Booking.create({
+        ticketId,
+        quantity,
+        status,
+      })
+      ticket.quantity -= quantity;
+    await ticket.save();
+
+    res.json({ message: "Booking successful", booking })
+    })
+    
+
 
     // Send a ping to confirm a successful connection
     await client.db('admin').command({ ping: 1 })
