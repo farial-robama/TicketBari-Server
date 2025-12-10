@@ -185,6 +185,82 @@ async function run() {
       }
     })
 
+    // Create payment intent
+    app.post('/create-payment-intent', verifyJWT, async (req, res) => {
+      try {
+        const { amount } = req.body
+        const amountInCents = Math.round(amount * 100)
+
+        const paymentIntent = await stripe.paymentIntents.create({
+          amount: amountInCents,
+          currency: 'usd',
+          payment_method_types: ['card']
+        })
+        res.send({ clientSecret: paymentIntent.client_secret })
+      } catch (error) {
+        console.error('/create-payment-intent error',error)
+        res.status(500).send({ message: 'Server error' })
+      }
+    })
+
+
+    // Save payment and update booking
+    app.post('/payments', verifyJWT, async (req, res) => {
+      try {
+        const { bookingId, transactionId, amount, ticketTitle } = req.body
+        const email = req.tokenEmail
+        
+        if (!ObjectId.isValid(bookingId)) {
+          return res.status(400).send({ message: 'Invalid booking ID' })
+        }
+
+        const booking = await db.collection('bookings').findOne({
+          _id: new ObjectId(bookingId)
+        })
+
+        if (!booking) return res.status(404).send({ message: 'Booking not found' })
+
+        const departureDateTime = new Date(`${booking.departureDate} ${booking.departure}`)
+        if (departureDateTime < new Date()) {
+          return res.status(400).send({ message: 'Cannot pay for past tickets' })
+        }
+
+        // Save payment transaction
+        const payment = {
+          userEmail: email,
+          bookingId: new ObjectId(bookingId),
+          transactionId,
+          amount,
+          ticketTitle,
+          paymentDate: new Date().toISOString()
+        }
+        await db.collection('payments').insertOne(payment)
+
+        // Update booking status to 'Paid'
+        await db.collection('bookings').updateOne(
+          { _id: new ObjectId(bookingId) },
+          { $set: { status: 'paid', paidAt: new Date().toISOString()}}
+        )
+
+        res.send({ success: true })
+      } catch (error) {
+        console.error('/payments error',error)
+        res.status(500).send({ message: 'Server error' })
+      }
+    })
+
+    // get user's transaction history
+    app.get('/user/transactions', verifyJWT, async (req, res) => {
+      try {
+        const email = req.tokenEmail
+        const transactions = await db.collection('payments').find({ userEmail: email }).sort({ paymentDate: -1 }).toArray()
+        res.send(transactions)
+      } catch (error) {
+        console.error('/user/transactions error',error)
+        res.status(500).send({ message: 'Server error' })
+      }
+    })
+
 
 
     // get all ticket for admin
