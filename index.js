@@ -63,9 +63,9 @@ const client = new MongoClient(process.env.MONGODB_URI, {
 async function run() {
   try {
     const db = client.db('ticketbariDB')
-    const plantsCollection = db.collection('plants')
     const ticketsCollection = db.collection('tickets')
     const usersCollection = db.collection('users')
+    const bookingsCollection = db.collection('bookings')
     const sellerRequestsCollection = db.collection('sellerRequests')
 
     app.post('/user', async (req, res) => {
@@ -110,6 +110,82 @@ async function run() {
         res.status(500).send({ message: 'Server error' })
       }
     })
+
+    // Create booking
+    app.post('/bookings', verifyJWT, async (req, res) => {
+      try {
+        const { ticketId, quantity } = req.body
+        const email = req.tokenEmail
+
+        if (!ObjectId.isValid(ticketId)) {
+          return res.status(400).send({ message: 'Invalid ticket ID' })
+        }
+
+        const ticket = await ticketsCollection.findOne({ _id: new ObjectId(id) })
+        if (!ticket) return res.status(404).send({ message: 'Ticket not found' })
+        if (ticket.quantity < quantity) {
+          return res.status(400).send({ message: 'Not enough tickets available' })
+        }
+
+        const booking = {
+          ticketId: new ObjectId(ticketId),
+          userEmail: email,
+          quantity,
+          totalPrice: ticket.price * quantity,
+          ticketTitle: ticket.title,
+          ticketImage: ticket.image,
+          from: ticket.from,
+          to: ticket.to,
+          departureDate: ticket.departureDate,
+          departureTime: ticket.departureTime,
+          unitPrice: ticket.price,
+          status: 'pending',
+          createdAt: new Date().toISOString()
+        }
+        const result = await db.collection('bookings').insertOne(booking)
+      res.send(result)
+      } catch (error) {
+        console.error('/bookings error',error)
+        res.status(500).send({ message: 'Server error' })
+      }
+    })
+
+    // get user's booking
+    app.get('/user/bookings', verifyJWT, async (req, res) => {
+      try {
+        const email = req.tokenEmail
+        const bookings = await db.collection('bookings').find({ userEmail: email }).sort({ createdAt: -1 }).toArray()
+        res.send(bookings)
+      } catch (error) {
+        console.error('/user/bookings error',error)
+        res.status(500).send({ message: 'Server error' })
+      }
+    })
+
+    // update booking status
+    app.patch('/bookings/:id/status', verifyJWT, async (req, res) => {
+      try {
+        const { id } = req.params
+        const { status } = req.body
+
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).send({ message: 'Invalid booking ID' })
+        }
+        if (!['accepted', 'rejected'].includes(status)) {
+          return res.status(400).send({ message: 'Invalid status' })
+        }
+       const result = await db.collection('bookings').updateOne(
+        { _id: new ObjectId(id) },
+        { $set: { status, updatedAt: new Date().toISOString() }}
+       )
+        res.send(result)
+      } catch (error) {
+        console.error('/bookings/status error',error)
+        res.status(500).send({ message: 'Server error' })
+      }
+    })
+
+
 
     // get all ticket for admin
     app.get('/admin/tickets', async (req, res) => {
