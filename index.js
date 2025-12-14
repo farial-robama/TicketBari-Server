@@ -310,6 +310,38 @@ async function run() {
       }
     })
 
+    // Get single ticket by id
+    app.get('/tickets/:id', async (req, res) => {
+      try {
+        const { id } = req.params
+
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).send({ message: 'Invalid ticket ID'})
+        }
+        const ticket = await ticketsCollection.findOne({ _id: new ObjectId(id) })
+
+        if (!ticket) {
+          return res.status(400).send({ message: 'Ticket not found'})
+        }
+        res.send(ticket)
+      } catch (error) {
+        console.error('/tickets/:id error',error)
+        res.status(500).send({ message: 'Server error' })
+      }
+    })
+
+    // Get advertised tickets
+    app.get('/tickets/advertised-home', async (req, res) => {
+      try {
+        const docs = await ticketsCollection.find({ isAdvertised: true, verificationStatus: 'approved', isHidden: { $ne: true } }).limit(6).toArray()
+        res.send(docs)
+      } catch (error) {
+        console.error('/tickets/advertised-home error',error)
+        res.status(500).send({ message: 'Server error' })
+      }
+    })
+
+
     // Vendor Routes
     // Add ticket(vendor)
     app.post('/tickets', verifyJWT, async (req, res) => {
@@ -533,10 +565,10 @@ async function run() {
 
 
     // get advertised tickets(max 6)
-    app.get('/tickets/advertised-home', async (req, res) => {
-      const docs = await ticketsCollection.find({ isAdvertised: true, verificationStatus: 'approved' }).limit(6).toArray()
-      res.send(docs)
-    })
+    // app.get('/tickets/advertised-home', async (req, res) => {
+    //   const docs = await ticketsCollection.find({ isAdvertised: true, verificationStatus: 'approved' }).limit(6).toArray()
+    //   res.send(docs)
+    // })
 
     // ticket booking
     // app.post("/booking", async (req, res) => {
