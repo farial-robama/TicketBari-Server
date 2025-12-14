@@ -329,6 +329,74 @@ async function run() {
       }
      })
 
+    //  Delete ticket (vendor)
+    app.delete('/tickets/:id', verifyJWT, async (req, res) => {
+      try {
+        const { id } = req.params
+
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).send({ message: 'Invalid ticket ID'})
+        }
+
+        // Verify ownership
+        const ticket = await ticketsCollection.findOne({ _id: new ObjectId(id) })
+        if(!ticket) return res.status(404).send({ message: 'Ticket not found'})
+        if (ticket.vendorEmail !== req.tokenEmail) {
+          return res.status(403).send({ message: 'Not authorized'})
+        }
+        const result = await ticketsCollection.deleteOne({ _id: new ObjectId(id) })
+        res.send(result)
+      } catch (error) {
+        console.error('/tickets/:id error',error)
+        res.status(500).send({ message: 'Server error' })
+      }
+    })
+
+    // Get bookings for vendor's tickets
+    app.get('/vendor/bookings', verifyJWT, async (req, res) => {
+      try {
+        const email = req.tokenEmail
+
+        // Get all vendor's ticket IDs
+        const vendorTickets = await ticketsCollection.find({ vendorEmail: email }).project({ _id: 1 }).toArray()
+
+        const ticketIds = vendorTickets.map(t => t._id)
+
+        // Get all bookings for these tickets
+        const bookings = await bookingsCollection.find({ ticketId: { $in: ticketIds }}).sort({ createdAt: -1 }).toArray()
+
+        res.send(bookings)
+      } catch (error) {
+        console.error('/vendor/bookings error',error)
+        res.status(500).send({ message: 'Server error' })
+      }
+    })
+
+    // Get vendor revenue stats
+    app.get('/vendor/revenue', verifyJWT, async (req, res) => {
+      try {
+        const email = req.tokenEmail
+
+        // Get vendor's tickets
+         const vendorTickets = await ticketsCollection.find({ vendorEmail: email }).toArray()
+
+         const ticketIds = vendorTickets.map(t => t._id)
+
+        // Get paid bookings
+        const paidBookings = await bookingsCollection.find({ ticketId: { $in: ticketIds },
+        status: 'paid'}).toArray()
+
+        const totalRevenue = paidBookings.reduce((sum, b) => sum + b.totalPrice, 0)
+        const totalTicketSold = paidBookings.reduce((sum, b) => sum + b.quantity, 0)
+        const totalTicketsAdded = vendorTickets.length
+
+        res.send({ totalRevenue, totalTicketSold, totalTicketsAdded })
+      } catch (error) {
+        console.error('/vendor/revenue error',error)
+        res.status(500).send({ message: 'Server error' })
+      }
+    })
+
 
 
     // get all ticket for admin
