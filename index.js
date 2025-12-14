@@ -451,16 +451,30 @@ async function run() {
           return res.status(400).send({ message: 'Invalid role'})
         }
 
-        const result = await usersCollection.updateOne( { email }, { $set: { role }})
+        const result = await usersCollection.updateOne( { email }, { $set: { role }} )
         res.send(result)
       } catch (error) {
-         console.error('/admin/users/role error',error)
+        console.error('/admin/users/role error',error)
         res.status(500).send({ message: 'Server error' })
       }
     })
 
     // Mark vendor as fraud(admin)
+    app.patch('/admin/users/:email/fraud', verifyJWT, verifyADMIN, async (req, res) => {
+      try {
+        const { email } = req.params
 
+        // Mark user as fraud
+        await usersCollection.updateOne( { email }, { $set: { isFraud: true }} )
+        // Hide all vendor's tickets
+        await ticketsCollection.updateMany( { vendorEmail: email }, { $set: { isHidden: true}} )
+
+        res.send({ success: true })
+      } catch (error) {
+        console.error('/admin/users/fraud error',error)
+        res.status(500).send({ message: 'Server error' })
+      }
+    })
 
     // get all ticket for admin
     app.get('/admin/tickets', async (req, res) => {
