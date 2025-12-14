@@ -72,6 +72,18 @@ async function run() {
       next()
     }
 
+    const verifyVENDOR = async (req, res, next) => {
+      const email = req.tokenEmail
+      const user = await usersCollection.findOne({ email })
+      if (user?.role !== 'vendor')
+        return res
+          .status(403)
+          .send({ message: 'Vendor only Actions!', role: user?.role })
+
+      next()
+    }
+
+    // User Routes
     app.post('/user', async (req, res) => {
         try {
             const userData = req.body
@@ -271,6 +283,33 @@ async function run() {
       }
     })
 
+    // Public Ticket Routes
+    // Get all approved tickets
+    app.get('/tickets/all', async (req, res) => {
+      try {
+        const tickets = await ticketsCollection.find({ verificationStatus: 'approved',
+          isHidden: { $ne: true}
+        }).sort({ createdAt: -1}).toArray()
+        res.send(tickets)
+      } catch (error) {
+        console.error('/tickets/all error',error)
+        res.status(500).send({ message: 'Server error' })
+      }
+    })
+
+    // Get latest tickets
+    app.get('/tickets/latest', async (req, res) => {
+      try {
+        const tickets = await ticketsCollection.find({ verificationStatus: 'approved',
+          isHidden: { $ne: true}
+        }).sort({ createdAt: -1}).limit(8).toArray()
+        res.send(tickets)
+      } catch (error) {
+        console.error('/tickets/latest error',error)
+        res.status(500).send({ message: 'Server error' })
+      }
+    })
+
     // Vendor Routes
     // Add ticket(vendor)
     app.post('/tickets', verifyJWT, async (req, res) => {
@@ -302,7 +341,7 @@ async function run() {
     })
 
     // Update ticket (vendor)
-     app.get('/tickets/:id',  verifyJWT, async (req, res) => {
+     app.patch('/tickets/:id',  verifyJWT, async (req, res) => {
       try {
         const { id } = req.params
         const ticketData = req.body
@@ -401,7 +440,7 @@ async function run() {
     // Get all tickets for admin 
     app.get('/admin/tickets', verifyJWT, verifyADMIN, async (req, res) => {
       try {
-        const result = await ticketsCollection.find({ vendorEmail: email }).sort({ createdAt: -1 }).toArray()
+        const result = await ticketsCollection.find().sort({ createdAt: -1 }).toArray()
         res.send(result)
       } catch (error) {
         console.error('/admin/tickets error',error)
@@ -442,7 +481,7 @@ async function run() {
     })
 
     // Update user role (admin) 
-    app.get('/admin/users/:email/role', verifyJWT, verifyADMIN, async (req, res) => {
+    app.patch('/admin/users/:email/role', verifyJWT, verifyADMIN, async (req, res) => {
       try {
         const { email } = req.params
         const { role } = req.body
@@ -476,11 +515,6 @@ async function run() {
       }
     })
 
-    // get all ticket for admin
-    app.get('/admin/tickets', async (req, res) => {
-      const result = await ticketsCollection.find().toArray()
-      res.send(result)
-    })
     // Admin: toggle advertise, enforce max 6 advertised
     app.patch('/admin/tickets/advertise/:id', async (req, res) => {
         const id = req.params.id
