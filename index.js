@@ -397,6 +397,69 @@ async function run() {
       }
     })
 
+    // Admin Routes
+    // Get all tickets for admin 
+    app.get('/admin/tickets', verifyJWT, verifyADMIN, async (req, res) => {
+      try {
+        const result = await ticketsCollection.find({ vendorEmail: email }).sort({ createdAt: -1 }).toArray()
+        res.send(result)
+      } catch (error) {
+        console.error('/admin/tickets error',error)
+        res.status(500).send({ message: 'Server error' })
+      }
+    })
+
+    // Approve/Reject ticket (admin)
+    app.patch('/admin/tickets/:id/verify', verifyJWT, verifyADMIN, async (req, res) => {
+      try {
+        const { id } = req.params
+        const { verificationStatus } = req.body
+
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).send({ message: 'Invalid ticket ID'})
+        }
+        if (!['approved', 'rejected'].includes(verificationStatus)) {
+          return res.status(400).send({ message: 'Invalid stats'})
+        }
+
+        const result = await ticketsCollection.updateOne({ _id: new ObjectId(id) }, { $set: { verificationStatus }})
+        res.send(result)
+      } catch (error) {
+        console.error('/admin/tickets/verify error',error)
+        res.status(500).send({ message: 'Server error' })
+      }
+    })
+    
+    // Get all users (admin) 
+    app.get('/admin/users', verifyJWT, verifyADMIN, async (req, res) => {
+      try {
+        const users = await usersCollection.find().toArray()
+        res.send(users)
+      } catch (error) {
+        console.error('/admin/users error',error)
+        res.status(500).send({ message: 'Server error' })
+      }
+    })
+
+    // Update user role (admin) 
+    app.get('/admin/users/:email/role', verifyJWT, verifyADMIN, async (req, res) => {
+      try {
+        const { email } = req.params
+        const { role } = req.body
+
+        if (!['customer', 'vendor', 'admin'].includes(role)) {
+          return res.status(400).send({ message: 'Invalid role'})
+        }
+
+        const result = await usersCollection.updateOne( { email }, { $set: { role }})
+        res.send(result)
+      } catch (error) {
+         console.error('/admin/users/role error',error)
+        res.status(500).send({ message: 'Server error' })
+      }
+    })
+
+    // Mark vendor as fraud(admin)
 
 
     // get all ticket for admin
