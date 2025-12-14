@@ -17,12 +17,12 @@ const app = express()
 // middleware
 app.use(
   cors({
-    origin: [process.env.CLIENT_DOMAIN],
+    origin: process.env.CLIENT_DOMAIN,
     credentials: true,
-    optionsSuccessStatus: 200,
   })
 )
-app.use(express.json())
+// app.options('*', cors());
+app.use(express.json());
 
 // jwt middlewares
 const verifyJWT = async (req, res, next) => {
@@ -40,17 +40,7 @@ const verifyJWT = async (req, res, next) => {
   }
 }
 
- // role middlewares
-    const verifyADMIN = async (req, res, next) => {
-      const email = req.tokenEmail
-      const user = await usersCollection.findOne({ email })
-      if (user?.role !== 'admin')
-        return res
-          .status(403)
-          .send({ message: 'Admin only Actions!', role: user?.role })
 
-      next()
-    }
 
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(process.env.MONGODB_URI, {
@@ -66,7 +56,21 @@ async function run() {
     const ticketsCollection = db.collection('tickets')
     const usersCollection = db.collection('users')
     const bookingsCollection = db.collection('bookings')
+    const paymentCollection = db.collection('payments')
     const sellerRequestsCollection = db.collection('sellerRequests')
+
+
+    // role middlewares
+    const verifyADMIN = async (req, res, next) => {
+      const email = req.tokenEmail
+      const user = await usersCollection.findOne({ email })
+      if (user?.role !== 'admin')
+        return res
+          .status(403)
+          .send({ message: 'Admin only Actions!', role: user?.role })
+
+      next()
+    }
 
     app.post('/user', async (req, res) => {
         try {
@@ -91,7 +95,7 @@ async function run() {
     app.get('/user/role', verifyJWT, async (req, res) => {
       try {
         const result = await usersCollection.findOne({ email: req.tokenEmail })
-        if(!user) return res.status(404).send({ message: 'User not found' })
+        if(!result) return res.status(404).send({ message: 'User not found' })
       res.send({ role: result?.role })
       } catch (error) {
         console.error('/user/role error',error)
@@ -103,8 +107,8 @@ async function run() {
     app.get('/user/profile', verifyJWT, async (req, res) => {
       try {
         const result = await usersCollection.findOne({ email: req.tokenEmail })
-        if(!user) return res.status(404).send({ message: 'User not found' })
-      res.send(user)
+        if(!result) return res.status(404).send({ message: 'User not found' })
+      res.send(result)
       } catch (error) {
         console.error('/user/profile error',error)
         res.status(500).send({ message: 'Server error' })
@@ -121,7 +125,7 @@ async function run() {
           return res.status(400).send({ message: 'Invalid ticket ID' })
         }
 
-        const ticket = await ticketsCollection.findOne({ _id: new ObjectId(id) })
+        const ticket = await ticketsCollection.findOne({ _id: new ObjectId(ticketId) })
         if (!ticket) return res.status(404).send({ message: 'Ticket not found' })
         if (ticket.quantity < quantity) {
           return res.status(400).send({ message: 'Not enough tickets available' })
@@ -220,7 +224,7 @@ async function run() {
 
         if (!booking) return res.status(404).send({ message: 'Booking not found' })
 
-        const departureDateTime = new Date(`${booking.departureDate} ${booking.departure}`)
+        const departureDateTime = new Date(`${booking.departureDate} ${booking.departureTime}`)
         if (departureDateTime < new Date()) {
           return res.status(400).send({ message: 'Cannot pay for past tickets' })
         }
@@ -242,6 +246,12 @@ async function run() {
           { $set: { status: 'paid', paidAt: new Date().toISOString()}}
         )
 
+        // Reduce ticket quantity
+        await ticketsCollection.updateOne(
+          { _id: booking.ticketId },
+          { $inc: { quantity: -booking.quantity }}
+        )
+
         res.send({ success: true })
       } catch (error) {
         console.error('/payments error',error)
@@ -260,6 +270,64 @@ async function run() {
         res.status(500).send({ message: 'Server error' })
       }
     })
+
+    // Vendor Routes
+    // Add ticket(vendor)
+    app.post('/tickets', verifyJWT, async (req, res) => {
+      try {
+        const ticketData = req.body
+        ticketData.vendorEmail = req.tokenEmail
+        ticketData.verificationStatus = 'pending'
+        ticketData.isAdvertised = false
+        ticketData.createdAt = new Date().toISOString()
+
+        const result = await ticketsCollection.insertOne(ticketData)
+        res.send(result)
+      } catch (error) {
+        console.error('/tickets error',error)
+        res.status(500).send({ message: 'Server error' })
+      }
+    })
+
+    // Get vendor's tickets
+    app.get('/vendor/tickets',  verifyJWT, async (req, res) => {
+      try {
+        const email = req.tokenEmail
+        const tickets = await ticketsCollection.find({ vendorEmail: email }).sort({ createdAt: -1 }).toArray()
+        res.send(tickets)
+      } catch (error) {
+        console.error('/vendor/tickets error',error)
+        res.status(500).send({ message: 'Server error' })
+      }
+    })
+
+    // Update ticket (vendor)
+     app.get('/tickets/:id',  verifyJWT, async (req, res) => {
+      try {
+        const { id } = req.params
+        const ticketData = req.body
+
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).send({ message: 'Invalid ticket ID'})
+        }
+
+        // Verify ownership
+        const ticket = await ticketsCollection.findOne({ _id: new ObjectId(id) })
+        if(!ticket) return res.status(404).send({ message: 'Ticket not found'})
+        if (ticket.vendorEmail !== req.tokenEmail) {
+          return res.status(403).send({ message: 'Not authorized'})
+        }
+        delete ticketData._id
+        const result = await ticketsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: ticketData }
+        )
+        res.send(result)
+      } catch (error) {
+        console.error('/tickets/:id error',error)
+        res.status(500).send({ message: 'Server error' })
+      }
+     })
 
 
 
@@ -287,37 +355,37 @@ async function run() {
 
     // get advertised tickets(max 6)
     app.get('/tickets/advertised-home', async (req, res) => {
-      const docs = await usersCollection.find({ isAdvertised: true, verificationStatus: 'approved' }).limit(6).toArray()
+      const docs = await ticketsCollection.find({ isAdvertised: true, verificationStatus: 'approved' }).limit(6).toArray()
       res.send(docs)
     })
 
     // ticket booking
-    app.post("/booking", async (req, res) => {
-      const { ticketId, quantity, status } = req.body;
+    // app.post("/booking", async (req, res) => {
+    //   const { ticketId, quantity, status } = req.body;
 
-      const ticket = await Ticket.findById(ticketId);
+    //   const ticket = await Ticket.findById(ticketId);
 
-      if (!ticket) {
-        return res.status(404).json({ message: "Ticket not found" })
-      }
-      const booking = await Booking.create({
-        ticketId,
-        quantity,
-        status,
-      })
-      ticket.quantity -= quantity;
-    await ticket.save();
+    //   if (!ticket) {
+    //     return res.status(404).json({ message: "Ticket not found" })
+    //   }
+    //   const booking = await Booking.create({
+    //     ticketId,
+    //     quantity,
+    //     status,
+    //   })
+    //   ticket.quantity -= quantity;
+    // await ticket.save();
 
-    res.json({ message: "Booking successful", booking })
-    })
-    
-
+    // res.json({ message: "Booking successful", booking })
+    // })
+  
 
     // Send a ping to confirm a successful connection
     await client.db('admin').command({ ping: 1 })
     console.log(
       'Pinged your deployment. You successfully connected to MongoDB!'
     )
+   
   } finally {
     // Ensures that the client will close when you finish/error
   }
