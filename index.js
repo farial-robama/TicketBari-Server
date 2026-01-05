@@ -1,6 +1,8 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
+const multer = require("multer");
+const path = require("path");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const admin = require("firebase-admin");
@@ -79,8 +81,6 @@ async function run() {
       next();
     };
 
-  
-
     app.post("/user", async (req, res) => {
       try {
         const userData = req.body;
@@ -132,6 +132,97 @@ async function run() {
         res.status(500).send({ message: "Server error" });
       }
     });
+
+    // Configure multer for memory storage
+    const storage = multer.memoryStorage();
+    const upload = multer({
+      storage: storage,
+      limits: {
+        fileSize: 5 * 1024 * 1024,
+      },
+      fileFilter: (req, file, cb) => {
+        const allowedTypes = /jpeg|jpg|png|gif/;
+        const extname = allowedTypes.test(
+          path.extname(file.originalname).toLowerCase()
+        );
+        const mimetype = allowedTypes.test(file.mimetype);
+
+        if (mimetype && extname) {
+          return cb(null, true);
+        } else {
+          cb(new Error("Only image files are allowed!"));
+        }
+      },
+    });
+
+    // Update user profile with image upload
+    app.put(
+      "/user/profile",
+      verifyJWT,
+      upload.single("image"),
+      async (req, res) => {
+        try {
+          const email = req.tokenEmail;
+          const { name, phone, location } = req.body;
+
+          // Validate input
+          if (!name || name.trim().length < 2) {
+            return res
+              .status(400)
+              .send({ message: "Name must be at least 2 characters" });
+          }
+
+          if (phone && !/^\+?[\d\s-()]+$/.test(phone)) {
+            return res
+              .status(400)
+              .send({ message: "Invalid phone number format" });
+          }
+
+          // Prepare update data
+          const updateData = {
+            name: name.trim(),
+            phone: phone?.trim() || "",
+            location: location?.trim() || "",
+            updated_at: new Date().toISOString(),
+          };
+
+          // Handle image upload if provided
+          if (req.file) {
+            // Convert image to base64
+            const base64Image = `data:${
+              req.file.mimetype
+            };base64,${req.file.buffer.toString("base64")}`;
+            updateData.image = base64Image;
+          }
+
+          // Update user in database
+          const result = await usersCollection.findOneAndUpdate(
+            { email },
+            { $set: updateData },
+            { returnDocument: "after" }
+          );
+
+          if (!result) {
+            return res.status(404).send({ message: "User not found" });
+          }
+
+          res.send(result);
+        } catch (error) {
+          console.error("/user/profile PUT error", error);
+
+          if (error instanceof multer.MulterError) {
+            if (error.code === "LIMIT_FILE_SIZE") {
+              return res
+                .status(400)
+                .send({ message: "File size too large. Max 5MB allowed." });
+            }
+            return res.status(400).send({ message: error.message });
+          }
+
+          res.status(500).send({ message: "Server error" });
+        }
+      }
+    );
 
     // Create booking
     app.post("/bookings", verifyJWT, async (req, res) => {
