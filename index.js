@@ -16,33 +16,27 @@ admin.initializeApp({
 });
 
 const app = express();
-// middleware
 app.use(
   cors({
     origin: process.env.CLIENT_DOMAIN,
     credentials: true,
   })
 );
-// app.options('*', cors());
 app.use(express.json());
 
-// jwt middlewares
+// JWT middleware
 const verifyJWT = async (req, res, next) => {
   const token = req?.headers?.authorization?.split(" ")[1];
-  console.log(token);
   if (!token) return res.status(401).send({ message: "Unauthorized Access!" });
   try {
     const decoded = await admin.auth().verifyIdToken(token);
     req.tokenEmail = decoded.email;
-    console.log(decoded);
     next();
   } catch (err) {
-    console.log(err);
     return res.status(401).send({ message: "Unauthorized Access!", err });
   }
 };
 
-// Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(process.env.MONGODB_URI, {
   serverApi: {
     version: ServerApiVersion.v1,
@@ -50,6 +44,7 @@ const client = new MongoClient(process.env.MONGODB_URI, {
     deprecationErrors: true,
   },
 });
+
 async function run() {
   try {
     const db = client.db("ticketbariDB");
@@ -58,7 +53,17 @@ async function run() {
     const bookingsCollection = db.collection("bookings");
     const paymentCollection = db.collection("payments");
 
-    // role middlewares
+    await bookingsCollection.createIndex(
+      { ticketId: 1, seatNumber: 1 },
+      {
+        unique: true,
+        partialFilterExpression: {
+          bookingStatus: { $in: ["pending", "confirmed"] },
+        },
+      }
+    );
+
+    // Role middlewares
     const verifyADMIN = async (req, res, next) => {
       const email = req.tokenEmail;
       const user = await usersCollection.findOne({ email });
@@ -66,7 +71,6 @@ async function run() {
         return res
           .status(403)
           .send({ message: "Admin only Actions!", role: user?.role });
-
       next();
     };
 
@@ -77,10 +81,49 @@ async function run() {
         return res
           .status(403)
           .send({ message: "Vendor only Actions!", role: user?.role });
-
       next();
     };
 
+    // Helper functions
+    function generateSeatNumber() {
+      const row = Math.floor(Math.random() * 50) + 1;
+      const seat = String.fromCharCode(65 + Math.floor(Math.random() * 6));
+      return `${row}${seat}`;
+    }
+
+    function generateBookingReference() {
+      return `BK${Date.now()}${Math.random()
+        .toString(36)
+        .substr(2, 6)
+        .toUpperCase()}`;
+    }
+
+    function calculateArrivalTime(departureTime, durationHours = 4) {
+      try {
+        const [time, period] = departureTime.split(" ");
+        const [hours, minutes] = time.split(":").map(Number);
+
+        let hour24 = hours;
+        if (period === "PM" && hours !== 12) hour24 += 12;
+        if (period === "AM" && hours === 12) hour24 = 0;
+
+        const totalMinutes = hour24 * 60 + minutes + durationHours * 60;
+        const arrivalHour24 = Math.floor(totalMinutes / 60) % 24;
+        const arrivalMinutes = totalMinutes % 60;
+
+        const arrivalPeriod = arrivalHour24 >= 12 ? "PM" : "AM";
+        const displayHour = arrivalHour24 % 12 || 12;
+
+        return `${displayHour}:${String(arrivalMinutes).padStart(
+          2,
+          "0"
+        )} ${arrivalPeriod}`;
+      } catch {
+        return "N/A";
+      }
+    }
+
+    // User Routes
     app.post("/user", async (req, res) => {
       try {
         const userData = req.body;
@@ -93,9 +136,7 @@ async function run() {
 
         const query = { email: userData.email };
         const existingUser = await usersCollection.findOne(query);
-        if (!existingUser) {
-          userData.role = "customer";
-        } else {
+        if (existingUser) {
           userData.role = existingUser.role;
         }
 
@@ -109,7 +150,6 @@ async function run() {
       }
     });
 
-    // get a user's role
     app.get("/user/role", verifyJWT, async (req, res) => {
       try {
         const result = await usersCollection.findOne({ email: req.tokenEmail });
@@ -121,7 +161,6 @@ async function run() {
       }
     });
 
-    // get a user Profile
     app.get("/user/profile", verifyJWT, async (req, res) => {
       try {
         const result = await usersCollection.findOne({ email: req.tokenEmail });
@@ -133,20 +172,17 @@ async function run() {
       }
     });
 
-    // Configure multer for memory storage
+    // Configure multer
     const storage = multer.memoryStorage();
     const upload = multer({
       storage: storage,
-      limits: {
-        fileSize: 5 * 1024 * 1024,
-      },
+      limits: { fileSize: 5 * 1024 * 1024 },
       fileFilter: (req, file, cb) => {
         const allowedTypes = /jpeg|jpg|png|gif/;
         const extname = allowedTypes.test(
           path.extname(file.originalname).toLowerCase()
         );
         const mimetype = allowedTypes.test(file.mimetype);
-
         if (mimetype && extname) {
           return cb(null, true);
         } else {
@@ -155,7 +191,6 @@ async function run() {
       },
     });
 
-    // Update user profile with image upload
     app.put(
       "/user/profile",
       verifyJWT,
@@ -165,7 +200,6 @@ async function run() {
           const email = req.tokenEmail;
           const { name, phone, location } = req.body;
 
-          // Validate input
           if (!name || name.trim().length < 2) {
             return res
               .status(400)
@@ -178,7 +212,6 @@ async function run() {
               .send({ message: "Invalid phone number format" });
           }
 
-          // Prepare update data
           const updateData = {
             name: name.trim(),
             phone: phone?.trim() || "",
@@ -186,16 +219,13 @@ async function run() {
             updated_at: new Date().toISOString(),
           };
 
-          // Handle image upload if provided
           if (req.file) {
-            // Convert image to base64
             const base64Image = `data:${
               req.file.mimetype
             };base64,${req.file.buffer.toString("base64")}`;
-            updateData.image = base64Image;
+            updateData.image = req.body.imageURL;
           }
 
-          // Update user in database
           const result = await usersCollection.findOneAndUpdate(
             { email },
             { $set: updateData },
@@ -209,7 +239,6 @@ async function run() {
           res.send(result);
         } catch (error) {
           console.error("/user/profile PUT error", error);
-
           if (error instanceof multer.MulterError) {
             if (error.code === "LIMIT_FILE_SIZE") {
               return res
@@ -218,7 +247,6 @@ async function run() {
             }
             return res.status(400).send({ message: error.message });
           }
-
           res.status(500).send({ message: "Server error" });
         }
       }
@@ -227,64 +255,122 @@ async function run() {
     // Create booking
     app.post("/bookings", verifyJWT, async (req, res) => {
       try {
-        const { ticketId, quantity } = req.body;
+        const { ticketId, quantity, seatNumber } = req.body;
         const email = req.tokenEmail;
 
+        // Validate ticket ID
         if (!ObjectId.isValid(ticketId)) {
           return res.status(400).send({ message: "Invalid ticket ID" });
         }
 
+        // Fetch ticket
         const ticket = await ticketsCollection.findOne({
           _id: new ObjectId(ticketId),
         });
-        if (!ticket)
+
+        if (!ticket) {
           return res.status(404).send({ message: "Ticket not found" });
-        if (ticket.quantity < quantity) {
-          return res
-            .status(400)
-            .send({ message: "Not enough tickets available" });
         }
 
+        // Generate booking data
+        const bookingReference = generateBookingReference();
+        const generatedSeatNumber = seatNumber || generateSeatNumber();
+        const arrivalTime =
+          ticket.arrivalTime || calculateArrivalTime(ticket.departureTime);
+
+        const ticketType = (
+          ticket.transportType ||
+          ticket.type ||
+          "bus"
+        ).toLowerCase();
+
+        // Build booking object
         const booking = {
+          // IDs
           ticketId: new ObjectId(ticketId),
           userEmail: email,
+
+          // Quantity & pricing
           quantity,
+          unitPrice: ticket.price,
           totalPrice: ticket.price * quantity,
+
+          // Ticket details
           ticketTitle: ticket.title,
           ticketImage: ticket.image,
+          ticketType,
+          transportType: ticketType,
+
+          // Route details
           from: ticket.from,
           to: ticket.to,
           departureDate: ticket.departureDate,
           departureTime: ticket.departureTime,
-          unitPrice: ticket.price,
+          arrivalTime,
+
+          // Booking details
+          seatNumber: generatedSeatNumber,
+          bookingReference,
+
+          // Status
           status: "pending",
+          bookingStatus: "pending",
+
+          // Payment (to be updated later)
+          transactionId: null,
+          paymentMethod: null,
+          paymentDate: null,
+
+          // Timestamps
           createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
         };
-        const result = await db.collection("bookings").insertOne(booking);
-        res.send(result);
+
+        // Insert booking
+        const result = await bookingsCollection.insertOne(booking);
+        res.status(201).send(result);
       } catch (error) {
-        console.error("/bookings error", error);
+        // Handle seat duplication (unique index)
+        if (error.code === 11000) {
+          return res.status(409).send({
+            message: "Seat already booked. Please select another seat.",
+          });
+        }
+
+        console.error("/bookings error:", error);
         res.status(500).send({ message: "Server error" });
       }
     });
 
-    // get user's booking
+    // Get user's bookings
     app.get("/user/bookings", verifyJWT, async (req, res) => {
       try {
         const email = req.tokenEmail;
-        const bookings = await db
-          .collection("bookings")
+        const bookings = await bookingsCollection
           .find({ userEmail: email })
           .sort({ createdAt: -1 })
           .toArray();
-        res.send(bookings);
+
+        const normalizedBookings = bookings.map((booking) => ({
+          ...booking,
+          bookingStatus: booking.bookingStatus || booking.status || "pending",
+          ticketType: booking.ticketType || booking.transportType || "bus",
+          seatNumber: booking.seatNumber || "N/A",
+          bookingReference:
+            booking.bookingReference ||
+            booking._id.toString().substring(0, 10).toUpperCase(),
+          arrivalTime: booking.arrivalTime || "N/A",
+          price: booking.price || booking.totalPrice || booking.amount || 0,
+        }));
+
+        res.send(normalizedBookings);
       } catch (error) {
         console.error("/user/bookings error", error);
         res.status(500).send({ message: "Server error" });
       }
     });
 
-    // update booking status
+    // Update booking status
     app.patch("/bookings/:id/status", verifyJWT, async (req, res) => {
       try {
         const { id } = req.params;
@@ -293,15 +379,33 @@ async function run() {
         if (!ObjectId.isValid(id)) {
           return res.status(400).send({ message: "Invalid booking ID" });
         }
-        if (!["accepted", "rejected"].includes(status)) {
+
+        const statusMap = {
+          accepted: "confirmed",
+          rejected: "cancelled",
+          pending: "pending",
+          paid: "confirmed",
+          cancelled: "cancelled",
+        };
+
+        if (
+          !["accepted", "rejected", "pending", "paid", "cancelled"].includes(
+            status
+          )
+        ) {
           return res.status(400).send({ message: "Invalid status" });
         }
-        const result = await db
-          .collection("bookings")
-          .updateOne(
-            { _id: new ObjectId(id) },
-            { $set: { status, updatedAt: new Date().toISOString() } }
-          );
+
+        const result = await bookingsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          {
+            $set: {
+              status: status,
+              bookingStatus: statusMap[status],
+              updatedAt: new Date().toISOString(),
+            },
+          }
+        );
         res.send(result);
       } catch (error) {
         console.error("/bookings/status error", error);
@@ -309,7 +413,7 @@ async function run() {
       }
     });
 
-    // Create payment intent
+    // Payment Intent
     app.post("/create-payment-intent", verifyJWT, async (req, res) => {
       try {
         const { amount } = req.body;
@@ -330,21 +434,28 @@ async function run() {
     // Save payment and update booking
     app.post("/payments", verifyJWT, async (req, res) => {
       try {
-        const { bookingId, transactionId, amount, ticketTitle } = req.body;
+        const { bookingId, transactionId, amount, paymentMethod } = req.body;
         const email = req.tokenEmail;
 
         if (!ObjectId.isValid(bookingId)) {
           return res.status(400).send({ message: "Invalid booking ID" });
         }
 
-        const booking = await db.collection("bookings").findOne({
+        const booking = await bookingsCollection.findOne({
           _id: new ObjectId(bookingId),
         });
 
-        if (!booking)
+        if (!booking) {
           return res.status(404).send({ message: "Booking not found" });
+        }
 
-        const departureDateTime = new Date(
+        // Prevent double payment
+        if (booking.status === "paid") {
+          return res.status(400).send({ message: "Booking already paid" });
+        }
+
+        /*
+    const departureDateTime = new Date(
           `${booking.departureDate} ${booking.departureTime}`
         );
         if (departureDateTime < new Date()) {
@@ -352,27 +463,53 @@ async function run() {
             .status(400)
             .send({ message: "Cannot pay for past tickets" });
         }
+    */
 
-        // Save payment transaction
+        // Validate amount
+        if (amount !== booking.totalPrice) {
+          return res.status(400).send({ message: "Payment amount mismatch" });
+        }
+
+        const paymentDate = new Date().toISOString();
+
+        // Save payment history
         const payment = {
           userEmail: email,
           bookingId: new ObjectId(bookingId),
           transactionId,
           amount,
-          ticketTitle,
-          paymentDate: new Date().toISOString(),
+          ticketTitle: booking.ticketTitle,
+          from: booking.from,
+          to: booking.to,
+          departureDate: booking.departureDate,
+          departureTime: booking.departureTime,
+          seatNumber: booking.seatNumber,
+          bookingReference: booking.bookingReference,
+          paymentMethod: paymentMethod || "Credit Card",
+          paymentDate,
+          status: "completed",
+          createdAt: paymentDate,
         };
-        await db.collection("payments").insertOne(payment);
 
-        // Update booking status to 'Paid'
-        await db
-          .collection("bookings")
-          .updateOne(
-            { _id: new ObjectId(bookingId) },
-            { $set: { status: "paid", paidAt: new Date().toISOString() } }
-          );
+        await paymentCollection.insertOne(payment);
 
-        // Reduce ticket quantity
+        // Update booking
+        await bookingsCollection.updateOne(
+          { _id: new ObjectId(bookingId) },
+          {
+            $set: {
+              status: "paid",
+              bookingStatus: "confirmed",
+              transactionId,
+              paymentMethod: paymentMethod || "Credit Card",
+              paymentDate,
+              paidAt: paymentDate,
+              updatedAt: paymentDate,
+            },
+          }
+        );
+
+        // Deduct ticket quantity
         await ticketsCollection.updateOne(
           { _id: booking.ticketId },
           { $inc: { quantity: -booking.quantity } }
@@ -380,23 +517,91 @@ async function run() {
 
         res.send({ success: true });
       } catch (error) {
-        console.error("/payments error", error);
+        console.error("/payments error:", error);
         res.status(500).send({ message: "Server error" });
       }
     });
 
-    // get user's transaction history
+    // Get user's transaction history
     app.get("/user/transactions", verifyJWT, async (req, res) => {
       try {
         const email = req.tokenEmail;
-        const transactions = await db
-          .collection("payments")
+        const transactions = await paymentCollection
           .find({ userEmail: email })
           .sort({ paymentDate: -1 })
           .toArray();
-        res.send(transactions);
+
+        const normalizedTransactions = transactions.map((t) => ({
+          _id: t._id,
+          transactionId: t.transactionId,
+          ticketTitle: t.ticketTitle || "Ticket Purchase",
+          amount: t.amount || 0,
+          paymentDate: t.paymentDate || t.createdAt,
+          status: t.status || "completed",
+          paymentMethod: t.paymentMethod || "N/A",
+          bookingReference: t.bookingReference || "",
+          from: t.from || "",
+          to: t.to || "",
+          departureDate: t.departureDate || "",
+          seatNumber: t.seatNumber || "",
+        }));
+
+        res.send(normalizedTransactions);
       } catch (error) {
         console.error("/user/transactions error", error);
+        res.status(500).send({ message: "Server error" });
+      }
+    });
+
+    // Cancel/Delete booking
+    app.delete("/bookings/:id", verifyJWT, async (req, res) => {
+      try {
+        const { id } = req.params;
+        const email = req.tokenEmail;
+
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).send({ message: "Invalid booking ID" });
+        }
+
+        const booking = await bookingsCollection.findOne({
+          _id: new ObjectId(id),
+        });
+
+        if (!booking) {
+          return res.status(404).send({ message: "Booking not found" });
+        }
+
+        if (booking.userEmail !== email) {
+          return res.status(403).send({ message: "Not authorized" });
+        }
+
+        // Update to cancelled status
+        await bookingsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          {
+            $set: {
+              status: "cancelled",
+              bookingStatus: "cancelled",
+              cancelledAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            },
+          }
+        );
+
+        // Restore ticket quantity if it was paid
+        if (
+          booking.status === "paid" ||
+          booking.bookingStatus === "confirmed"
+        ) {
+          await ticketsCollection.updateOne(
+            { _id: booking.ticketId },
+            { $inc: { quantity: booking.quantity } }
+          );
+        }
+
+        res.send({ success: true, message: "Booking cancelled successfully" });
+      } catch (error) {
+        console.error("/bookings DELETE error", error);
         res.status(500).send({ message: "Server error" });
       }
     });
@@ -602,14 +807,21 @@ async function run() {
         const ticketIds = vendorTickets.map((t) => t._id);
 
         // Get paid bookings
+        // const paidBookings = await bookingsCollection
+        //   .find({ ticketId: { $in: ticketIds }, status: "paid" })
+        //   .toArray();
         const paidBookings = await bookingsCollection
-          .find({ ticketId: { $in: ticketIds }, status: "paid" })
+          .find({
+            ticketId: { $in: ticketIds },
+            $or: [{ status: "paid" }, { bookingStatus: "confirmed" }],
+          })
           .toArray();
 
         const totalRevenue = paidBookings.reduce(
-          (sum, b) => sum + b.totalPrice,
+          (sum, b) => sum + (b.totalPrice || b.amount || 0),
           0
         );
+
         const totalTicketsSold = paidBookings.reduce(
           (sum, b) => sum + b.quantity,
           0
