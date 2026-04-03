@@ -78,11 +78,9 @@ Copy `.env.example` to `.env` and fill in your values:
 |---|---|
 | `PORT` | Server port (default: `5000`) |
 | `MONGODB_URI` | MongoDB Atlas connection string |
-| `JWT_SECRET` | Secret key for signing JWT tokens |
-| `STRIPE_SECRET_KEY` | Stripe secret key (`sk_test_...`) |
-| `FIREBASE_PROJECT_ID` | Firebase project ID |
-| `FIREBASE_CLIENT_EMAIL` | Firebase Admin SDK client email |
-| `FIREBASE_PRIVATE_KEY` | Firebase Admin SDK private key |
+| `CLIENT_DOMAIN` | Frontend URL for CORS |
+| `FB_SERVICE_KEY` | Firebase service account JSON encoded as base64 |
+| `STRIPE_SECRET_KEY` | Stripe secret key |
 
 ---
 
